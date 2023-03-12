@@ -12,9 +12,6 @@ from keras.layers import Dense, Dropout, LSTM
 # Load DAta
 company = 'FSCSX'
 
-#Mess with yfinance
-yf.pdr_override()
-
 # Set start and end time to get data from
 start = dt.datetime(2012,1,1) #"2012-01-01"
 end = dt.datetime(2023,1,1)  #"2023-01-01"
