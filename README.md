@@ -22,6 +22,9 @@ A Long Short-Term Memory (LSTM) neural network has been implemented to predict s
 2. Install the required packages:
     pip install -r requirements.txt
 
+3. To show the matplotlib graphs you need to ensure tkinter is installed
+    sudo apt isntall python3-tk
+
 
 ## Usage
 
