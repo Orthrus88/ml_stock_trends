@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import datetime as dt
 import yfinance as yf
+import keras.layers as layers
 
 from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential
@@ -18,16 +19,16 @@ from keras.layers import Dense, Dropout, LSTM
 company = 'FSCSX'
 
 # Set start and end time to get data from
-start = dt.datetime(1985,7,28) # This is the start of their historical data for FSCSX
-end = dt.datetime(2022,1,1)
+start = dt.datetime(1985,8,5) # This is the start of their historical data for FSCSX
+end = dt.datetime(2023,3,12)
 
 # use yf.download to get the historical data for the ticker and save it as a csv
-train_data = yf.download(company, start, end)
-data = train_data.to_csv("Data/Train/FSCSX_Train.csv")
+df = yf.download(company, start, end)
+df = df.to_csv("Data/Train/FSCSX_Train.csv")
 
-# assign stock csv to train_data var
-train_data = pd.read_csv("Data/Train/FSCSX_Train.csv")
-train_data = train_data[['Date', 'Close']]
+# assign stock csv to df var
+df = pd.read_csv("Data/Train/FSCSX_Train.csv")
+df = df[['Date', 'Close']]
 
 
 # Date in CSV is currently str - Define function to move str to datetime
@@ -40,79 +41,114 @@ def str_to_datetime(s):
     return dt.datetime(year=year, month=month, day=day)
 
 # Pass the full date column to str_to_datetime
-train_data['Date'] = data['Date'].apply(str_to_datetime)
+df['Date'] = df['Date'].apply(str_to_datetime)
+
+# remove the index from the data only using the date
+df.index = df.pop('Date')
+
+def df_to_windowed_df(dataframe, first_date_str, last_date_str, n=3):
+    first_date = str_to_datetime(first_date_str)
+    last_date  = str_to_datetime(last_date_str)
+
+    target_date = first_date
+  
+    dates = []
+    X, Y = [], []
+
+    last_time = False
+    while True:
+        df_subset = dataframe.loc[:target_date].tail(n+1)
+    
+        if len(df_subset) != n+1:
+            print(f'Error: Window of size {n} is too large for date {target_date}')
+            return
+
+        values = df_subset['Close'].to_numpy()
+        x, y = values[:-1], values[-1]
+
+        dates.append(target_date)
+        X.append(x)
+        Y.append(y)
+
+        next_week = dataframe.loc[target_date:target_date+dt.timedelta(days=7)]
+        next_datetime_str = str(next_week.head(2).tail(1).index.values[0])
+        next_date_str = next_datetime_str.split('T')[0]
+        year_month_day = next_date_str.split('-')
+        year, month, day = year_month_day
+        next_date = dt.datetime(day=int(day), month=int(month), year=int(year))
+    
+        if last_time:
+            break
+    
+        target_date = next_date
+
+        if target_date == last_date:
+            last_time = True
+    
+        ret_df = pd.DataFrame({})
+        ret_df['Target Date'] = dates
+  
+        X = np.array(X)
+        for i in range(0, n):
+            X[:, i]
+            ret_df[f'Target-{n-i}'] = X[:, i]
+  
+        ret_df['Target'] = Y
+
+        return ret_df
+
+# Start day second time around: '2021-03-25'
+windowed_df = df_to_windowed_df(df, '1985-08-08', '2022-01-01', n=3)
+print(windowed_df)
+input('press enter')
+
+def windowed_df_to_date_X_y(windowed_dataframe):
+    # Converst windowed_dataframe to array
+    df_as_np = windowed_dataframe.to_numpy()
 
 
+    dates = df_as_np[:, 0]
 
-prediction_days = 30
+    middle_matrix = df_as_np[:, 1:-1]
+    X = middle_matrix.reshape((len(dates), middle_matrix.shape[1], 1))
 
-x_train = []
-y_train = []
+    Y = df_as_np[:, -1]
 
-x_train, y_train = np.array(x_train), np.array(y_train)
-x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    return dates, X.astype(np.float32), Y.astype(np.float32)
 
-# Build the model
+dates, X, y = windowed_df_to_date_X_y(windowed_df)
 
-model = Sequential()
+q_80 = int(len(dates) * .8)
+q_90 = int(len(dates) * .9)
 
-model.add(LSTM(units=50, return_sequences=True, input_shape = (x_train.shape[1], 1)))
-model.add(Dropout(0.2))
-model.add(LSTM(units=50, return_sequences=True))
-model.add(Dropout(0.2))
-model.add(LSTM(units=50, return_sequences=True))
-model.add(Dropout(0.2))
-model.add(Dense(units=1)) # Prediction of the next closing value
+dates_train, X_train, y_train = dates[:q_80], X[:q_80], y[:q_80]
 
-model.compile(optimizer='adam', loss='mean_squared_error')
-model.fit(x_train, y_train, epochs=25, batch_size=32)
-#model.save('predictions.hdf5')
+dates_val, X_val, y_val = dates[q_80:q_90], X[q_80:q_90], y[q_80:q_90]
+dates_test, X_test, y_test = dates[q_90:], X[q_90:], y[q_90:]
 
-# Test the model on existing data
-# Load the test data
-test_start = dt.datetime(2022,1,1)
-test_end = dt.datetime.now()
+plt.plot(dates_train, y_train)
+plt.plot(dates_val, y_val)
+plt.plot(dates_test, y_test)
 
-test_data = yf.download(company, test_start, test_end)
-test_data = test_data.to_csv("Data/Predict/FSCSX_Predict.csv")
+plt.legend(['Train', 'Validation', 'Test'])
+plt.show()
 
-test_data = pd.read_csv("Data/Predict/FSCSX_Predict.csv")
-test_data = test_data[['Date', 'Close']]
+model = Sequential([
+layers.Input((3, 1)),
+layers.LSTM(64),
+layers.Dense(32, activation='relu'),
+layers.Dense(32, activation='relu'),
+layers.Dense(1)
+])
 
-test_data['Date'] = test_data['Date'].apply(str_to_datetime)
+model.compile(loss='mean_squared_error', optimizer='adam')
 
-actual_prices = test_data['Close'].values
-
-total_dataset = pd.concat((data['Close'], test_data['Close']), axis=0)
-
-model_inputs = total_dataset[len(total_dataset) - len(test_data) - prediction_days:].values
-model_inputs = model_inputs.reshape(-1, 1)
-model_inputs = scaler.transform(model_inputs)
-
-# Make preditctions
-
-x_test = []
-for x in range(prediction_days, len(model_inputs)):
-    x_test.append(model_inputs[x-prediction_days:x, 0])
-
-x_test = np.array(x_test)
-x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-
-predicted_prices = model.predict(x_test)
-predicted_prices = predicted_prices.reshape(predicted_prices.shape[0], predicted_prices.shape[1])
-predicted_prices = scaler.inverse_transform(predicted_prices)
-predicted_prices = predicted_prices[-len(test_data):, 0]
-print(predicted_prices)
-
-print(predicted_prices.shape)
+model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=100)
 
 
+train_predictions = model.predict(X_train).flatten()
 
-# Plot Test Predictions
-plt.plot(actual_prices, color="black", label=f"Actual {company} price")
-plt.plot(predicted_prices, color="green", label=f"Predicted {company} price")
-plt.title(f"{company} Share Price")
-plt.xlabel('Time')
-plt.ylabel(f"{company} Share Price")
-plt.legend()
+plt.plot(dates_train, train_predictions)
+plt.plot(dates_train, y_train)
+plt.legend(['Training Predictions', 'Training Observations'])
 plt.show()
